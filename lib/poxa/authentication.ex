@@ -68,8 +68,9 @@ defmodule Poxa.Authentication do
   @doc """
   Returns :ok if the body md5 matches and :error, reason tuple otherwise
   """
-  @spec check_body(binary, binary) :: :ok | error_reason
+  @spec check_body(binary | list, binary) :: :ok | error_reason
   def check_body("", nil), do: :ok
+  def check_body(body_qs, nil) when is_list(body_qs), do: :ok
   def check_body(body, body_md5) do
     md5 = CryptoHelper.md5_to_binary(body)
     if md5 == body_md5, do: :ok,

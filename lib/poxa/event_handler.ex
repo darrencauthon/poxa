@@ -6,59 +6,54 @@ defmodule Poxa.EventHandler do
 
   More info on Pusher events at: http://pusher.com/docs/rest_api
   """
-  alias Poxa.Authentication
+  alias Poxa.AuthorizationHelper
   alias Poxa.PusherEvent
   require Lager
 
-  @error_json JSEX.encode!([error: "invalid json"])
-  @doc """
-  If the body is a valid JSON, the state of the handler will be the body
-  Otherwise the response will be a 400 status code
-  """
-  def init(_transport, req, _opts) do
-    {:ok, body, req} = :cowboy_req.body(req)
-    if JSEX.is_json?(body) do
-      {:ok, req, body}
-    else
-      Lager.info("Invalid JSON on Event Handler: #{body}")
-      {:ok, req} = :cowboy_req.reply(400, [], @error_json, req)
-      {:shutdown, req, nil}
-    end
+  def init(_transport, _req, _opts) do
+    {:upgrade, :protocol, :cowboy_rest}
   end
 
-  @authentication_error_json JSEX.encode!([error: "Authentication error"])
+  def allowed_methods(req, state) do
+    {["POST"], req, state}
+  end
+
+  def is_authorized(req, state) do
+    AuthorizationHelper.is_authorized(req, state)
+  end
+
+  def content_types_accepted(req, state) do
+    {[{{"application", "json", []}, :post_json},
+      {{"application", "x-www-form-urlencoded", []}, :post_form}],
+      req, state}
+  end
+
+  def post_json(req, body) do
+    request_data = JSEX.decode!(body)
+    post(req, request_data)
+  end
+
+  def post_form(req, request_data) do
+    {:ok, body, req} = :cowboy_req.body_qs(req)
+    IO.inspect body
+    post(req, request_data)
+  end
+
   @invalid_event_json JSEX.encode!([error: "Event must have channel(s), name, and data"])
 
-  @doc """
-  Decode the JSON and send events to channels if successful
-  """
-  def handle(req, body) do
-    {qs_vals, req} = :cowboy_req.qs_vals(req)
-    {method, req} = :cowboy_req.method(req)
-    {path, req} = :cowboy_req.path(req)
-    # http://pusher.com/docs/rest_api#authentication
-    case Authentication.check(method, path, body, qs_vals) do
-      :ok ->
-        request_data = JSEX.decode!(body)
-        {request_data, channels, exclude} = PusherEvent.parse_channels(request_data)
-        if channels && PusherEvent.valid?(request_data) do
-          message = prepare_message(request_data)
-          PusherEvent.send_message_to_channels(channels, message, exclude)
-          {:ok, req} = :cowboy_req.reply(200, [], "{}", req)
-          {:ok, req, nil}
-        else
-          Lager.info('No channel defined')
-          {:ok, req} = :cowboy_req.reply(400, [], @invalid_event_json, req)
-          {:ok, req, nil}
-        end
-      _ ->
-        Lager.info('Authentication failed')
-        {:ok, req} = :cowboy_req.reply(401, [], @authentication_error_json, req)
-        {:ok, req, nil}
+  defp post(req, request_data) do
+    {request_data, channels, exclude} = PusherEvent.parse_channels(request_data)
+    if channels && PusherEvent.valid?(request_data) do
+      message = prepare_message(request_data)
+      PusherEvent.send_message_to_channels(channels, message, exclude)
+      req = :cowboy_req.set_resp_body("", req)
+      {true, req, nil}
+    else
+      Lager.info("Event must have channel(s), name and data")
+      {:ok, req} = :cowboy_req.reply(400, [], @invalid_event_json, req)
+      {:halt, req, nil}
     end
   end
-
-  def terminate(_reason, _req, _state), do: :ok
 
   # Remove name and add event to the response
   defp prepare_message(message) do

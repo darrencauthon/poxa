@@ -73,8 +73,12 @@ defmodule Poxa.AuthenticationTest do
     assert validate :hmac
   end
 
-  test "an empty  body" do
+  test "an empty body" do
     assert check_body("", nil) == :ok
+  end
+
+  test "a list as body" do
+    assert check_body([], nil) == :ok
   end
 
   test "a valid signature" do
